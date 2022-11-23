@@ -59,6 +59,7 @@ public:
     QSet<QString> trackedUsers;
     QSet<QString> outdatedUsers;
     QHash<QString, QHash<QString, DeviceKeys>> deviceKeys;
+    QHash<QString, QHash<QString, bool>> selfVerifiedDevices;
     QueryKeysJob *currentQueryKeysJob = nullptr;
     bool encryptionUpdateRequired = false;
     Database *database = nullptr;

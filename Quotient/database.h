@@ -31,7 +31,7 @@ public:
     QSqlQuery execute(const QString &queryString);
     QSqlQuery execute(QSqlQuery &query);
     QSqlDatabase database();
-    QSqlQuery prepareQuery(const QString& quaryString);
+    QSqlQuery prepareQuery(const QString& queryString);
 
     void storeOlmAccount(const QOlmAccount& olmAccount);
     Omittable<OlmErrorCode> setupOlmAccount(QOlmAccount &olmAccount);
@@ -70,6 +70,7 @@ public:
 
     bool isSessionVerified(const QString& edKey);
     void setSessionVerified(const QString& edKeyId);
+    void setMasterKeyVerified(const QString& masterKeyId);
 
 private:
     void migrateTo1();
@@ -77,6 +78,7 @@ private:
     void migrateTo3();
     void migrateTo4();
     void migrateTo5();
+    void migrateTo6();
 
     QString m_userId;
     QString m_deviceId;

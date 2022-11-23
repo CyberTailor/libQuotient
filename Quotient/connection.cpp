@@ -16,6 +16,7 @@
 
 // NB: since Qt 6, moc_connection.cpp needs Room and User fully defined
 #include "moc_connection.cpp"
+#include "util.h"
 
 #include "csapi/account-data.h"
 #include "csapi/capabilities.h"
@@ -1837,10 +1838,166 @@ bool Connection::isQueryingKeys() const
 
 void Connection::Private::handleQueryKeys(const QueryKeysJob* job)
 {
-    const auto newDeviceKeys = job->deviceKeys();
-    for (const auto& [user, keys] : asKeyValueRange(newDeviceKeys)) {
+    database->transaction();
+    const auto masterKeys = job->masterKeys();
+    for (const auto &[userId, key] : asKeyValueRange(masterKeys)) {
+        if (key.userId != userId) {
+            qCWarning(E2EE) << "Master key: userId mismatch";
+            continue;
+        }
+        if (!key.usage.contains("master"_ls)) {
+            qCWarning(E2EE) << "Master key: invalid usage";
+            continue;
+        }
+        auto checkQuery = database->prepareQuery("SELECT * FROM master_keys WHERE userId=:userId"_ls);
+        checkQuery.bindValue(":userId"_ls, key.userId);
+        database->execute(checkQuery);
+        if (checkQuery.next()) {
+            if (checkQuery.value("key"_ls).toString() != key.keys.values()[0]) {
+                qCWarning(E2EE) << "New master key for" << key.userId;
+                database->transaction();
+                auto query = database->prepareQuery(
+                    "UPDATE tracked_devices SET verified=0, selfVerified=0 WHERE matrixId=:matrixId;"_ls);
+                query.bindValue(":matrixId"_ls, userId);
+                database->execute(query);
+                query = database->prepareQuery("DELETE FROM self_signing_keys WHERE matrixId=:matrixId;"_ls);
+                query.bindValue(":matrixId"_ls, userId);
+                database->execute(query);
+                database->commit();
+            } else {
+                continue;
+            }
+        }
+
+        auto query = database->prepareQuery("DELETE FROM master_keys WHERE userId=:userId;"_ls);
+        query.bindValue(":userId"_ls, userId);
+        database->execute(query);
+        query = database->prepareQuery("INSERT INTO master_keys(userId, key) VALUES(:userId, :key);"_ls);
+        query.bindValue(":userId"_ls, userId);
+        query.bindValue(":key"_ls, key.keys.values()[0]);
+        database->execute(query);
+    }
+    const auto selfSigningKeys = job->selfSigningKeys();
+    for (const auto &[userId, key] : asKeyValueRange(selfSigningKeys)) {
+        if (key.userId != userId) {
+            qCWarning(E2EE) << "Self signing key: userId mismatch";
+            continue;
+        }
+        if (!key.usage.contains("self_signing"_ls)) {
+            qCWarning(E2EE) << "Self signing key: invalid usage";
+            continue;
+        }
+        auto masterKeyQuery = database->prepareQuery("SELECT key FROM master_keys WHERE userId=:userId"_ls);
+        masterKeyQuery.bindValue(":userId"_ls, userId);
+        database->execute(masterKeyQuery);
+        if (!masterKeyQuery.next()) {
+            continue;
+        }
+        auto masterKey = masterKeyQuery.value("key"_ls).toString();
+
+        auto checkQuery = database->prepareQuery("SELECT key FROM self_signing_keys WHERE userId=:userId;"_ls);
+        checkQuery.bindValue(":userId"_ls, userId);
+        database->execute(checkQuery);
+        if (checkQuery.next()) {
+            auto oldKey = checkQuery.value("key"_ls).toString();
+            if (oldKey != key.keys.values()[0]) {
+                qCWarning(E2EE) << "New self-signing key for" << userId << ". Marking all devices as unverified.";
+                database->transaction();
+                auto query = database->prepareQuery(
+                    "UPDATE tracked_devices SET verified=0, selfVerified=0 WHERE matrixId=:matrixId;"_ls);
+                query.bindValue(":matrixId"_ls, userId);
+                database->execute(query);
+                database->commit();
+            }
+        }
+
+        auto signature = key.signatures[userId]["ed25519:"_ls % masterKey].toString();
+        if (!ed25519VerifySignature(masterKey, toJson(key), signature)) {
+            qCWarning(E2EE) << "Self signing key: failed signature verification" << userId;
+            continue;
+        }
+        auto query = database->prepareQuery("DELETE FROM self_signing_keys WHERE userId=:userId;"_ls);
+        query.bindValue(":userId"_ls, userId);
+        database->execute(query);
+        query = database->prepareQuery("INSERT INTO self_signing_keys(userId, key) VALUES(:userId, :key);"_ls);
+        query.bindValue(":userId"_ls, userId);
+        query.bindValue(":key"_ls, key.keys.values()[0]);
+        database->execute(query);
+    }
+    const auto userSigningKeys = job->userSigningKeys();
+    for (const auto &[userId, key] : asKeyValueRange(userSigningKeys)) {
+        if (key.userId != userId) {
+            qWarning() << "User signing key: userId mismatch";
+            continue;
+        }
+        if (!key.usage.contains("user_signing"_ls)) {
+            qWarning() << "User signing key: invalid usage";
+            continue;
+        }
+        auto masterKeyQuery = database->prepareQuery("SELECT key FROM master_keys WHERE userId=:userId"_ls);
+        masterKeyQuery.bindValue(":userId"_ls, userId);
+        database->execute(masterKeyQuery);
+        if (!masterKeyQuery.next()) {
+            continue;
+        }
+
+        auto checkQuery = database->prepareQuery("SELECT key FROM user_signing_keys WHERE userId=:userId"_ls);
+        checkQuery.bindValue(":userId"_ls, userId);
+        database->execute(checkQuery);
+        if (checkQuery.next()) {
+            auto oldKey = checkQuery.value("key"_ls).toString();
+            if (oldKey != key.keys.values()[0]) {
+                qCWarning(E2EE) << "New user signing key; marking all master signing keys as unverified";
+                database->transaction();
+                auto query = database->prepareQuery(
+                    "UPDATE master_keys SET verified=0;"_ls);
+                database->execute(query);
+                database->commit();
+            }
+        }
+
+        auto masterKey = masterKeyQuery.value("key"_ls).toString();
+        auto signature = key.signatures[userId]["ed25519:"_ls % masterKey].toString();
+        if (!ed25519VerifySignature(masterKey, toJson(key), signature)) {
+            qWarning() << "User signing key: failed signature verification" << userId;
+            continue;
+        }
+        auto query = database->prepareQuery("DELETE FROM user_signing_keys WHERE userId=:userId;"_ls);
+        query.bindValue(":userId"_ls, userId);
+        database->execute(query);
+        query = database->prepareQuery("INSERT INTO user_signing_keys(userId, key) VALUES(:userId, :key);"_ls);
+        query.bindValue(":userId"_ls, userId);
+        query.bindValue(":key"_ls, key.keys.values()[0]);
+        database->execute(query);
+    }
+    database->commit();
+    if (q->isUserVerified(q->userId())) {
+        auto query = database->prepareQuery("SELECT key FROM user_signing_keys WHERE userId=:userId;"_ls);
+        query.bindValue(":userId"_ls, q->userId());
+        database->execute(query);
+        query.next();
+        auto userSigningKey = query.value("key"_ls).toString();
+        for (const auto& masterKey : job->masterKeys()) {
+            auto signature = masterKey.signatures[q->userId()]["ed25519:"_ls % userSigningKey].toString();
+            if (!signature.isEmpty()) {
+                if (ed25519VerifySignature(userSigningKey, toJson(masterKey), signature)) {
+                    database->setMasterKeyVerified(masterKey.keys.values()[0]);
+                    emit q->userVerified(masterKey.userId);
+                } else {
+                    qCWarning(E2EE) << "Master key signature verification failed";
+                }
+            }
+        }
+    }
+    const auto data = job->deviceKeys();
+    for(const auto &[user, keys] : asKeyValueRange(data)) {
         QHash<QString, Quotient::DeviceKeys> oldDevices = deviceKeys[user];
+        auto query = database->prepareQuery("SELECT * FROM self_signing_keys WHERE userId=:userId;"_ls);
+        query.bindValue(":userId"_ls, user);
+        database->execute(query);
+        auto selfSigningKey = query.next() ? query.value("key"_ls).toString() : QString();
         deviceKeys[user].clear();
+        selfVerifiedDevices[user].clear();
         for(const auto &device : keys) {
             if(device.userId != user) {
                 qWarning(E2EE)
@@ -1867,6 +2024,14 @@ void Connection::Private::handleQueryKeys(const QueryKeysJob* job)
                     qDebug(E2EE)
                         << "Device reuse detected. Skipping this device";
                     continue;
+                }
+            }
+            if (!selfSigningKey.isEmpty() && !device.signatures[user]["ed25519:"_ls % selfSigningKey].isEmpty()) {
+                if (ed25519VerifySignature(selfSigningKey, toJson(static_cast<DeviceKeys>(device)), device.signatures[user]["ed25519:"_ls % selfSigningKey])) {
+                    selfVerifiedDevices[user][device.deviceId] = true;
+                    emit q->sessionVerified(user, device.deviceId);
+                } else {
+                    qCWarning(E2EE) << "failed self signing signature check" << user << device.deviceId;
                 }
             }
             deviceKeys[user][device.deviceId] = SLICE(device, DeviceKeys);
@@ -1936,12 +2101,17 @@ void Connection::Private::saveDevicesList()
 
     query.prepare(QStringLiteral(
         "INSERT INTO tracked_devices"
-        "(matrixId, deviceId, curveKeyId, curveKey, edKeyId, edKey, verified) "
-        "SELECT :matrixId, :deviceId, :curveKeyId, :curveKey, :edKeyId, :edKey, :verified WHERE NOT EXISTS(SELECT 1 FROM tracked_devices WHERE matrixId=:matrixId AND deviceId=:deviceId);"
+        "(matrixId, deviceId, curveKeyId, curveKey, edKeyId, edKey, verified, selfVerified) "
+        "VALUES (:matrixId, :deviceId, :curveKeyId, :curveKey, :edKeyId, :edKey, :verified, :selfVerified);"
         ));
     for (const auto& [user, devices] : asKeyValueRange(deviceKeys)) {
         for (const auto& device : devices) {
             auto keys = device.keys.keys();
+            auto deleteQuery = database->prepareQuery("DELETE FROM tracked_devices WHERE matrixId=:matrixId AND deviceId=:deviceId;"_ls);
+            deleteQuery.bindValue(":matrixId"_ls, user);
+            deleteQuery.bindValue(":deviceId"_ls, device.deviceId);
+            database->execute(deleteQuery);
+
             auto curveKeyId = keys[0].startsWith("curve"_ls) ? keys[0] : keys[1];
             auto edKeyId = keys[0].startsWith("ed"_ls) ? keys[0] : keys[1];
 
@@ -1953,6 +2123,7 @@ void Connection::Private::saveDevicesList()
             query.bindValue(":edKey"_ls, device.keys[edKeyId]);
             // If the device gets saved here, it can't be verified
             query.bindValue(":verified"_ls, false);
+            query.bindValue(":selfVerified"_ls, selfVerifiedDevices[user][device.deviceId]);
 
             q->database()->execute(query);
         }
@@ -1985,6 +2156,7 @@ void Connection::Private::loadDevicesList()
              {query.value("edKeyId"_ls).toString(), query.value("edKey"_ls).toString()}},
              {} // Signatures are not saved/loaded as they are not needed after initial validation
         };
+        selfVerifiedDevices[query.value("matrixId"_ls).toString()][query.value("deviceId"_ls).toString()] = query.value("selfVerified"_ls).toBool();
     }
 
 }
@@ -2445,6 +2617,10 @@ bool Connection::isVerifiedSession(const QByteArray& megolmSessionId) const
         return false;
     }
     auto olmSessionId = query.value("olmSessionId"_ls).toString();
+    if (olmSessionId == "SELF"_ls) {
+        return true;
+    }
+
     query.prepare("SELECT senderKey FROM olm_sessions WHERE sessionId=:sessionId;"_ls);
     query.bindValue(":sessionId"_ls, olmSessionId.toLatin1());
     database()->execute(query);
@@ -2452,8 +2628,29 @@ bool Connection::isVerifiedSession(const QByteArray& megolmSessionId) const
         return false;
     }
     auto curveKey = query.value("senderKey"_ls).toString();
-    query.prepare("SELECT verified FROM tracked_devices WHERE curveKey=:curveKey;"_ls);
+
+    query.prepare("SELECT matrixId, selfVerified, verified FROM tracked_devices WHERE curveKey=:curveKey;"_ls);
     query.bindValue(":curveKey"_ls, curveKey);
+    database()->execute(query);
+    if (!query.next()) {
+        return false;
+    }
+    auto userId = query.value("matrixId"_ls).toString();
+    return query.value("verified"_ls).toBool() || (isUserVerified(userId) && query.value("selfVerified"_ls).toBool());
+}
+
+QString Connection::masterKeyForUser(const QString& userId) const
+{
+    auto query = database()->prepareQuery("SELECT key FROM master_keys WHERE userId=:userId"_ls);
+    query.bindValue(":userId"_ls, userId);
+    database()->execute(query);
+    return query.next() ? query.value("key"_ls).toString() : QString();
+}
+
+bool Connection::isUserVerified(const QString& userId) const
+{
+    auto query = database()->prepareQuery("SELECT verified FROM master_keys WHERE userId=:userId"_ls);
+    query.bindValue(":userId"_ls, userId);
     database()->execute(query);
     return query.next() && query.value("verified"_ls).toBool();
 }
@@ -2475,8 +2672,13 @@ bool Connection::isKnownE2eeCapableDevice(const QString& userId, const QString& 
     database()->execute(query);
     return query.next();
 }
-
 #endif
+
+void Connection::reloadDevices()
+{
+    d->outdatedUsers = d->trackedUsers;
+    d->loadOutdatedUserDevices();
+}
 
 Connection* Connection::makeMockConnection(const QString& mxId)
 {

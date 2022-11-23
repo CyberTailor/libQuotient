@@ -42,7 +42,8 @@ Database::Database(const QString& userId, const QString& deviceId,
     case 1: migrateTo2(); [[fallthrough]];
     case 2: migrateTo3(); [[fallthrough]];
     case 3: migrateTo4(); [[fallthrough]];
-    case 4: migrateTo5();
+    case 4: migrateTo5(); [[fallthrough]];
+    case 5: migrateTo6();
     }
 }
 
@@ -159,6 +160,20 @@ void Database::migrateTo5()
 
     execute(QStringLiteral("ALTER TABLE tracked_devices ADD verified BOOL;"));
     execute(QStringLiteral("PRAGMA user_version = 5"));
+    commit();
+}
+
+void Database::migrateTo6()
+{
+    qCDebug(DATABASE) << "Migrating database to version 6";
+    transaction();
+    execute(QStringLiteral("CREATE TABLE master_keys (userId TEXT, key TEXT, verified INTEGER);"));
+    execute(QStringLiteral("CREATE TABLE self_signing_keys (userId TEXT, key TEXT);"));
+    execute(QStringLiteral("CREATE TABLE user_signing_keys (userId TEXT, key TEXT);"));
+    execute(QStringLiteral("INSERT INTO outdated_users SELECT * FROM tracked_users;"));
+    execute(QStringLiteral("ALTER TABLE tracked_devices ADD selfVerified INTEGER;"));
+    execute(QStringLiteral("PRAGMA user_version = 6;"));
+
     commit();
 }
 
@@ -460,4 +475,14 @@ bool Database::isSessionVerified(const QString& edKey)
     query.bindValue(":edKey"_ls, edKey);
     execute(query);
     return query.next() && query.value("verified"_ls).toBool();
+}
+
+void Database::setMasterKeyVerified(const QString& masterKeyId)
+{
+    qWarning() << "marking master key as verified";
+    auto query = prepareQuery(QStringLiteral("UPDATE master_keys SET verified=true WHERE key=:key;"));
+    query.bindValue(":key"_ls, masterKeyId);
+    transaction();
+    execute(query);
+    commit();
 }

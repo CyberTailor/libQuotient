@@ -348,6 +348,11 @@ public:
     QJsonObject decryptNotification(const QJsonObject &notification);
     QStringList devicesForUser(const QString& userId) const;
     Q_INVOKABLE bool isQueryingKeys() const;
+    QString masterKeyForUser(const QString& userId) const;
+    bool isUserVerified(const QString& userId) const;
+
+    void reloadDevices();
+
 #endif // Quotient_E2EE_ENABLED
     Q_INVOKABLE Quotient::SyncJob* syncJob() const;
     Q_INVOKABLE QString nextBatchToken() const;
@@ -868,6 +873,7 @@ Q_SIGNALS:
         Quotient::KeyVerificationSession::State state);
     void sessionVerified(const QString& userId, const QString& deviceId);
     bool finishedQueryingKeys();
+    void userVerified(const QString& userId);
 #endif
 
 protected:

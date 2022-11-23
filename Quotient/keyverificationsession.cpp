@@ -393,12 +393,21 @@ void KeyVerificationSession::handleMac(const KeyVerificationMacEvent& event)
         return;
     }
 
+    auto masterKey = m_connection->masterKeyForUser(m_remoteUserId);
+    if (event.mac().contains("ed25519:"_ls % masterKey)) {
+        if (calculateMac(masterKey, true, "ed25519:"_ls % masterKey) != event.mac().value("ed25519:"_ls % masterKey)) {
+            cancelVerification(KEY_MISMATCH);
+            return;
+        }
+    }
+
     if (calculateMac(key, true) != event.keys()) {
         cancelVerification(KEY_MISMATCH);
         return;
     }
 
     m_pendingEdKeyId = edKeyId;
+    m_pendingMasterKeyId = masterKey;
 
     if (m_verified) {
         trustKeys();
@@ -408,6 +417,11 @@ void KeyVerificationSession::handleMac(const KeyVerificationMacEvent& event)
 void KeyVerificationSession::trustKeys()
 {
     m_connection->database()->setSessionVerified(m_pendingEdKeyId);
+    m_connection->database()->setMasterKeyVerified(m_pendingMasterKeyId);
+    if (m_remoteUserId == m_connection->userId()) {
+        m_connection->reloadDevices();
+    }
+    //TODO sign master key
     emit m_connection->sessionVerified(m_remoteUserId, m_remoteDeviceId);
     macReceived = true;
 
