@@ -180,14 +180,14 @@ SsoSession* Connection::prepareForSso(const QString& initialDeviceName,
     return new SsoSession(this, initialDeviceName, deviceId);
 }
 
-void Connection::loginWithToken(const QByteArray& loginToken,
+void Connection::loginWithToken(const QString& loginToken,
                                 const QString& initialDeviceName,
                                 const QString& deviceId)
 {
     Q_ASSERT(d->data->baseUrl().isValid() && d->loginFlows.contains(LoginFlows::Token));
     d->loginToServer(LoginFlows::Token.type,
                      none /*user is encoded in loginToken*/, QString() /*password*/,
-                     QString::fromUtf8(loginToken), deviceId, initialDeviceName);
+                     loginToken, deviceId, initialDeviceName);
 }
 
 void Connection::assumeIdentity(const QString& mxId, const QString& accessToken,
@@ -758,7 +758,7 @@ bool Connection::Private::processIfVerificationEvent(const Event& evt,
 {
     return switchOnType(evt,
         [this, encrypted](const KeyVerificationRequestEvent& reqEvt) {
-            setupKeyVerificationSession(reqEvt.fullJson()["sender"_ls].toString(),
+            setupKeyVerificationSession(reqEvt.fullJson()[SenderKeyL].toString(),
                                         reqEvt, q, encrypted);
             return true;
         },
@@ -1143,15 +1143,15 @@ SendToDeviceJob* Connection::sendToDevices(
     const QString& eventType, const UsersToDevicesToContent& contents)
 {
     return callApi<SendToDeviceJob>(BackgroundRequest, eventType,
-                                    QString::fromLatin1(generateTxnId()), contents);
+                                    generateTxnId(), contents);
 }
 
 SendMessageJob* Connection::sendMessage(const QString& roomId,
                                         const RoomEvent& event)
 {
     const auto txnId = event.transactionId().isEmpty() ? generateTxnId()
-                                                       : event.transactionId().toLatin1();
-    return callApi<SendMessageJob>(roomId, event.matrixType(), QString::fromLatin1(txnId),
+                                                       : event.transactionId();
+    return callApi<SendMessageJob>(roomId, event.matrixType(), txnId,
                                    event.contentJson());
 }
 
@@ -1579,7 +1579,7 @@ user_factory_t Connection::userFactory() { return _userFactory; }
 room_factory_t Connection::_roomFactory = defaultRoomFactory<>;
 user_factory_t Connection::_userFactory = defaultUserFactory<>;
 
-QByteArray Connection::generateTxnId() const
+QString Connection::generateTxnId() const
 {
     return d->data->generateTxnId();
 }
@@ -1861,9 +1861,10 @@ void Connection::Private::handleQueryKeys(const QueryKeysJob* job)
                                   "Skipping this device";
                 continue;
             }
+            const auto& deviceEdKeyKey = "ed25519:"_ls + device.deviceId;
             if (oldDevices.contains(device.deviceId)) {
-                if (oldDevices[device.deviceId].keys["ed25519:"_ls % device.deviceId]
-                    != device.keys["ed25519:"_ls % device.deviceId]) {
+                if (oldDevices[device.deviceId].keys[deviceEdKeyKey]
+                    != device.keys[deviceEdKeyKey]) {
                     qDebug(E2EE)
                         << "Device reuse detected. Skipping this device";
                     continue;
@@ -2008,7 +2009,7 @@ void Connection::Private::saveOlmAccount()
 
 QJsonObject Connection::decryptNotification(const QJsonObject& notification)
 {
-    if (auto r = room(notification["room_id"_ls].toString()))
+    if (auto r = room(notification[RoomIdKeyL].toString()))
         if (auto event =
                 loadEvent<EncryptedEvent>(notification["event"_ls].toObject()))
             if (const auto decrypted = r->decryptMessage(*event))
@@ -2021,7 +2022,7 @@ Database* Connection::database() const
     return d->database;
 }
 
-UnorderedMap<QString, QOlmInboundGroupSession>
+UnorderedMap<QByteArray, QOlmInboundGroupSession>
 Connection::loadRoomMegolmSessions(const Room* room) const
 {
     return database()->loadMegolmSessions(room->id());
@@ -2065,7 +2066,7 @@ bool Connection::Private::isKnownCurveKey(const QString& userId,
 bool Connection::hasOlmSession(const QString& user,
                                const QString& deviceId) const
 {
-    const auto& curveKey = d->curveKeyForUserDevice(user, deviceId);
+    const auto& curveKey = d->curveKeyForUserDevice(user, deviceId).toLatin1();
     return d->olmSessions.contains(curveKey) && !d->olmSessions[curveKey].empty();
 }
 
@@ -2073,7 +2074,7 @@ std::pair<QOlmMessage::Type, QByteArray> Connection::Private::olmEncryptMessage(
     const QString& userId, const QString& device,
     const QByteArray& message) const
 {
-    const auto& curveKey = curveKeyForUserDevice(userId, device);
+    const auto& curveKey = curveKeyForUserDevice(userId, device).toLatin1();
     const auto& olmSession = olmSessions.at(curveKey).front();
     const auto result = olmSession.encrypt(message);
     database->updateOlmSession(curveKey, olmSession);
@@ -2121,8 +2122,8 @@ bool Connection::Private::createOlmSession(const QString& targetUserId,
                         << recipientCurveKey << session.error();
         return false;
     }
-    saveSession(*session, QString::fromLatin1(recipientCurveKey));
-    olmSessions[QString::fromLatin1(recipientCurveKey)].push_back(std::move(*session));
+    saveSession(*session, recipientCurveKey);
+    olmSessions[recipientCurveKey].push_back(std::move(*session));
     return true;
 }
 
@@ -2133,9 +2134,8 @@ QJsonObject Connection::Private::assembleEncryptedContent(
     payloadJson.insert(SenderKey, data->userId());
 //    eventJson.insert("sender_device"_ls, data->deviceId());
     payloadJson.insert("keys"_ls,
-                       QJsonObject{
-                           { Ed25519Key,
-                             QString::fromLatin1(olmAccount->identityKeys().ed25519) } });
+                       QJsonObject{ { Ed25519Key,
+                                      olmAccount->identityKeys().ed25519 } });
     payloadJson.insert("recipient"_ls, targetUserId);
     payloadJson.insert(
         "recipient_keys"_ls,
@@ -2149,23 +2149,18 @@ QJsonObject Connection::Private::assembleEncryptedContent(
           QJsonObject { { "type"_ls, type },
                         { "body"_ls, QString::fromLatin1(cipherText) } } }
     };
-    return EncryptedEvent(encrypted, QString::fromLatin1(olmAccount->identityKeys().curve25519))
+    return EncryptedEvent(encrypted, olmAccount->identityKeys().curve25519)
         .contentJson();
 }
 
-std::pair<EventPtr, QString> Connection::Private::sessionDecryptMessage(
+std::pair<EventPtr, QByteArray> Connection::Private::sessionDecryptMessage(
     const EncryptedEvent& encryptedEvent)
 {
-#ifndef Quotient_E2EE_ENABLED
-    qWarning(E2EE) << "End-to-end encryption (E2EE) support is turned off.";
-        return {};
-#else
     if (encryptedEvent.algorithm() != OlmV1Curve25519AesSha2AlgoKey)
         return {};
 
     const auto identityKey = olmAccount->identityKeys().curve25519;
-    const auto personalCipherObject =
-        encryptedEvent.ciphertext(QString::fromLatin1(identityKey));
+    const auto personalCipherObject = encryptedEvent.ciphertext(identityKey);
     if (personalCipherObject.isEmpty()) {
         qDebug(E2EE) << "Encrypted event is not for the current device";
         return {};
@@ -2204,7 +2199,7 @@ std::pair<EventPtr, QString> Connection::Private::sessionDecryptMessage(
     }
 
     auto&& decryptedEvent =
-        fromJson<EventPtr>(QJsonDocument::fromJson(decrypted.toUtf8()));
+        fromJson<EventPtr>(QJsonDocument::fromJson(decrypted));
 
     if (auto sender = decryptedEvent->fullJson()[SenderKey].toString();
         sender != encryptedEvent.senderId()) {
@@ -2213,16 +2208,17 @@ std::pair<EventPtr, QString> Connection::Private::sessionDecryptMessage(
         return {};
     }
 
-    auto query = database->prepareQuery(QStringLiteral("SELECT edKey FROM tracked_devices WHERE curveKey=:curveKey;"));
-    query.bindValue(":curveKey"_ls, encryptedEvent.contentJson()["sender_key"_ls].toString());
+    auto query = database->prepareQuery(QStringLiteral(
+        "SELECT edKey FROM tracked_devices WHERE curveKey=:curveKey;"));
+    const auto& senderKey = encryptedEvent.contentPart<QString>(SenderKeyKeyL);
+    query.bindValue(":curveKey"_ls, senderKey);
     database->execute(query);
     if (!query.next()) {
-        qWarning(E2EE)
-            << "Received olm message from unknown device"
-            << encryptedEvent.contentJson()["sender_key"_ls].toString();
+        qWarning(E2EE) << "Received olm message from unknown device"
+                       << senderKey;
         return {};
     }
-    auto edKey = decryptedEvent->fullJson()["keys"_ls]["ed25519"_ls].toString();
+    auto edKey = decryptedEvent->fullJson()["keys"_ls][Ed25519Key].toString();
     if (edKey.isEmpty() || query.value(QStringLiteral("edKey")).toString() != edKey) {
         qDebug(E2EE) << "Received olm message with invalid ed key";
         return {};
@@ -2238,7 +2234,7 @@ std::pair<EventPtr, QString> Connection::Private::sessionDecryptMessage(
     }
     const auto ourKey = decryptedEventObject.value("recipient_keys"_ls).toObject()
         .value(Ed25519Key).toString();
-    if (ourKey != QString::fromUtf8(olmAccount->identityKeys().ed25519)) {
+    if (ourKey != olmAccount->identityKeys().ed25519) {
         qDebug(E2EE) << "Found key" << ourKey
                      << "instead of ours own ed25519 key"
                      << olmAccount->identityKeys().ed25519
@@ -2247,10 +2243,9 @@ std::pair<EventPtr, QString> Connection::Private::sessionDecryptMessage(
     }
 
     return { std::move(decryptedEvent), olmSessionId };
-#endif // Quotient_E2EE_ENABLED
 }
 
-std::pair<QString, QString> Connection::Private::sessionDecryptMessage(
+std::pair<QByteArray, QByteArray> Connection::Private::sessionDecryptMessage(
     const QJsonObject& personalCipherObject, const QByteArray& senderKey)
 {
     const auto msgType = static_cast<QOlmMessage::Type>(
@@ -2262,9 +2257,9 @@ std::pair<QString, QString> Connection::Private::sessionDecryptMessage(
     QOlmMessage message {
         personalCipherObject.value(BodyKey).toString().toLatin1(), msgType
     };
-    for (const auto& session : olmSessions[QString::fromLatin1(senderKey)])
+    for (const auto& session : olmSessions[senderKey])
         if (msgType == QOlmMessage::General
-            || session.matchesInboundSessionFrom(QString::fromLatin1(senderKey), message)) {
+            || session.matchesInboundSessionFrom(senderKey, message)) {
             return doDecryptMessage(session, message, [this, &session] {
                 q->database()->setOlmSessionLastReceived(
                     session.sessionId(), QDateTime::currentDateTime());
@@ -2293,8 +2288,8 @@ std::pair<QString, QString> Connection::Private::sessionDecryptMessage(
     }
     return doDecryptMessage(
         newSession, message, [this, &senderKey, &newSession] {
-            saveSession(newSession, QString::fromLatin1(senderKey));
-            olmSessions[QString::fromLatin1(senderKey)].push_back(std::move(newSession));
+            saveSession(newSession, senderKey);
+            olmSessions[senderKey].push_back(std::move(newSession));
         });
 }
 
@@ -2304,19 +2299,19 @@ void Connection::Private::loadSessions()
 }
 
 void Connection::Private::saveSession(const QOlmSession& session,
-                                      const QString& senderKey) const
+                                      const QByteArray &senderKey) const
 {
     q->database()->saveOlmSession(senderKey, session,
                                   QDateTime::currentDateTime());
 }
 
 template <typename FnT>
-std::pair<QString, QString> Connection::Private::doDecryptMessage(
+std::pair<QByteArray, QByteArray> Connection::Private::doDecryptMessage(
     const QOlmSession& session, const QOlmMessage& message, FnT&& andThen) const
 {
     const auto expectedMessage = session.decrypt(message);
     if (expectedMessage) {
-        const std::pair result { QString::fromUtf8(*expectedMessage), QString::fromUtf8(session.sessionId()) };
+        const std::pair result { *expectedMessage, session.sessionId() };
         andThen();
         return result;
     }

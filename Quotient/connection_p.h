@@ -70,7 +70,7 @@ public:
     bool processIfVerificationEvent(const Event &evt, bool encrypted);
 
     // A map from SenderKey to vector of InboundSession
-    UnorderedMap<QString, std::vector<QOlmSession>> olmSessions;
+    UnorderedMap<QByteArray, std::vector<QOlmSession>> olmSessions;
 
     QHash<QString, KeyVerificationSession*> verificationSessions;
     QSet<std::pair<QString, QString>> triedDevices;
@@ -148,8 +148,6 @@ public:
         return q->stateCacheDir().filePath("state.json"_ls);
     }
 
-    std::pair<EventPtr, QString> sessionDecryptMessage(const EncryptedEvent& encryptedEvent);
-
     void saveAccessTokenToKeychain() const;
     void dropAccessToken();
 
@@ -157,15 +155,19 @@ public:
     void saveOlmAccount();
 
     void loadSessions();
-    void saveSession(const QOlmSession& session, const QString& senderKey) const;
+    void saveSession(const QOlmSession& session,
+                     const QByteArray& senderKey) const;
 
     template <typename FnT>
-    std::pair<QString, QString> doDecryptMessage(const QOlmSession& session,
-                                                 const QOlmMessage& message,
-                                                 FnT&& andThen) const;
+    std::pair<QByteArray, QByteArray> doDecryptMessage(
+        const QOlmSession& session, const QOlmMessage& message,
+        FnT&& andThen) const;
 
-    std::pair<QString, QString> sessionDecryptMessage(
+    std::pair<QByteArray, QByteArray> sessionDecryptMessage(
         const QJsonObject& personalCipherObject, const QByteArray& senderKey);
+
+    std::pair<EventPtr, QByteArray> sessionDecryptMessage(
+        const EncryptedEvent& encryptedEvent);
 
     bool isKnownCurveKey(const QString& userId, const QString& curveKey) const;
 
