@@ -1849,26 +1849,23 @@ void Connection::Private::handleQueryKeys(const QueryKeysJob* job)
                 continue;
             }
             if (!std::all_of(device.algorithms.cbegin(),
-                            device.algorithms.cend(),
-                            isSupportedAlgorithm)) {
+                             device.algorithms.cend(), isSupportedAlgorithm)) {
                 qWarning(E2EE) << "Unsupported encryption algorithms found"
                                << device.algorithms;
                 continue;
             }
             if (!verifyIdentitySignature(device, device.deviceId,
-                                        device.userId)) {
+                                         device.userId)) {
                 qWarning(E2EE) << "Failed to verify devicekeys signature. "
                                   "Skipping this device";
                 continue;
             }
-            const auto& deviceEdKeyKey = "ed25519:"_ls + device.deviceId;
-            if (oldDevices.contains(device.deviceId)) {
-                if (oldDevices[device.deviceId].keys[deviceEdKeyKey]
-                    != device.keys[deviceEdKeyKey]) {
-                    qDebug(E2EE)
-                        << "Device reuse detected. Skipping this device";
-                    continue;
-                }
+            if (const auto& deviceEdKeyKey = "ed25519:"_ls + device.deviceId;
+                oldDevices.contains(device.deviceId)
+                && oldDevices[device.deviceId].keys[deviceEdKeyKey]
+                       != device.keys[deviceEdKeyKey]) {
+                qDebug(E2EE) << "Device reuse detected. Skipping this device";
+                continue;
             }
             deviceKeys[user][device.deviceId] = SLICE(device, DeviceKeys);
         }
@@ -1975,17 +1972,23 @@ void Connection::Private::loadDevicesList()
         outdatedUsers += query.value(0).toString();
     }
 
+    static const QStringList algorithms{ SupportedAlgorithms.cbegin(),
+                                         SupportedAlgorithms.cend() };
     query = q->database()->prepareQuery(QStringLiteral("SELECT * FROM tracked_devices;"));
     q->database()->execute(query);
     while(query.next()) {
-        deviceKeys[query.value("matrixId"_ls).toString()][query.value("deviceId"_ls).toString()] = DeviceKeys {
-            query.value("matrixId"_ls).toString(),
+        deviceKeys[query.value("matrixId"_ls).toString()].insert(
             query.value("deviceId"_ls).toString(),
-            { "m.olm.v1.curve25519-aes-sha2"_ls, "m.megolm.v1.aes-sha2"_ls},
-            {{query.value("curveKeyId"_ls).toString(), query.value("curveKey"_ls).toString()},
-             {query.value("edKeyId"_ls).toString(), query.value("edKey"_ls).toString()}},
-             {} // Signatures are not saved/loaded as they are not needed after initial validation
-        };
+            {
+                .userId = query.value("matrixId"_ls).toString(),
+                .deviceId = query.value("deviceId"_ls).toString(),
+                .algorithms = algorithms,
+                .keys{ { query.value("curveKeyId"_ls).toString(),
+                         query.value("curveKey"_ls).toString() },
+                       { query.value("edKeyId"_ls).toString(),
+                         query.value("edKey"_ls).toString() } },
+                .signatures{} // not needed after initial validation so not saved
+            });
     }
 
 }
