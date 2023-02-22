@@ -30,6 +30,7 @@
 #include "events/directchatevent.h"
 #include "jobs/downloadfilejob.h"
 #include "jobs/mediathumbnailjob.h"
+#include "jobs/slidingsyncjob.h"
 #include "jobs/syncjob.h"
 #include <variant>
 
@@ -106,6 +107,7 @@ public:
     UnorderedMap<QString, EventPtr> accountData;
     QMetaObject::Connection syncLoopConnection {};
     int syncTimeout = -1;
+    QString nextPos;
 
 #ifdef Quotient_E2EE_ENABLED
     QSet<QString> trackedUsers;
@@ -142,7 +144,7 @@ public:
     QPointer<GetWellknownJob> resolverJob = nullptr;
     QPointer<GetLoginFlowsJob> loginFlowsJob = nullptr;
 
-    SyncJob* syncJob = nullptr;
+    SlidingSyncJob* syncJob = nullptr;
     QPointer<LogoutJob> logoutJob = nullptr;
 
     bool cacheState = true;
@@ -175,7 +177,7 @@ public:
     void completeSetup(const QString &mxId);
     void removeRoom(const QString& roomId);
 
-    void consumeRoomData(SyncDataList&& roomDataList, bool fromCache);
+    void consumeRoomData(SlidingRoomsData&& roomDataList);
     void consumeAccountData(Events&& accountDataEvents);
     void consumePresenceData(Events&& presenceData);
     void consumeToDeviceEvents(Events&& toDeviceEvents);
@@ -783,12 +785,7 @@ void Connection::sync(int timeout)
     }
 
     d->syncTimeout = timeout;
-    Filter filter;
-    filter.room.timeline.limit.emplace(100);
-    filter.room.state.lazyLoadMembers.emplace(d->lazyLoading);
-    auto job = d->syncJob =
-        callApi<SyncJob>(BackgroundRequest, d->data->lastEvent(), filter,
-                         timeout);
+    auto job = d->syncJob = callApi<SlidingSyncJob>(BackgroundRequest, generateTxnId(), d->nextPos);
     connect(job, &SyncJob::success, this, [this, job] {
         onSyncSuccess(job->takeData());
         d->syncJob = nullptr;
@@ -852,9 +849,11 @@ QJsonObject toJson(const DirectChatsMap& directChats)
     return json;
 }
 
-void Connection::onSyncSuccess(SyncData&& data, bool fromCache)
+void Connection::onSyncSuccess(SlidingSyncData&& data, bool fromCache)
 {
+    d->nextPos = data.pos;
 #ifdef Quotient_E2EE_ENABLED
+   /*
     d->oneTimeKeysCount = data.deviceOneTimeKeysCount();
     if (d->oneTimeKeysCount[SignedCurve25519Key] < 0.4 * d->olmAccount->maxNumberOfOneTimeKeys()
         && !d->isUploadingKeys) {
@@ -875,25 +874,25 @@ void Connection::onSyncSuccess(SyncData&& data, bool fromCache)
     }
 
     d->consumeDevicesList(data.takeDevicesList());
+    */
 #endif // Quotient_E2EE_ENABLED
-    d->consumeToDeviceEvents(data.takeToDeviceEvents());
-    d->data->setLastEvent(data.nextBatch());
-    d->consumeRoomData(data.takeRoomData(), fromCache);
-    d->consumeAccountData(data.takeAccountData());
-    d->consumePresenceData(data.takePresenceData());
+    //d->consumeToDeviceEvents(data.takeToDeviceEvents());
+    //d->data->setLastEvent(data.nextBatch());
+    d->consumeRoomData(data.takeRoomData());
+    //d->consumeAccountData(data.takeAccountData());
+    //d->consumePresenceData(data.takePresenceData());
 #ifdef Quotient_E2EE_ENABLED
-    if(d->encryptionUpdateRequired) {
-        d->loadOutdatedUserDevices();
-        d->encryptionUpdateRequired = false;
-    }
+    //if(d->encryptionUpdateRequired) {
+    //    d->loadOutdatedUserDevices();
+    //    d->encryptionUpdateRequired = false;
+    //}
 #endif
 }
 
-void Connection::Private::consumeRoomData(SyncDataList&& roomDataList,
-                                          bool fromCache)
+void Connection::Private::consumeRoomData(SlidingRoomsData&& roomData)
 {
-    for (auto&& roomData: roomDataList) {
-        const auto forgetIdx = roomIdsToForget.indexOf(roomData.roomId);
+    for (auto&&room: roomData) {
+        /*const auto forgetIdx = roomIdsToForget.indexOf(roomData.roomId);
         if (forgetIdx != -1) {
             roomIdsToForget.removeAt(forgetIdx);
             if (roomData.joinState == JoinState::Leave) {
@@ -906,16 +905,10 @@ void Connection::Private::consumeRoomData(SyncDataList&& roomDataList,
                            << "has just been forgotten but /sync returned it in"
                            << terse << roomData.joinState
                            << "state - suspiciously fast turnaround";
-        }
-        if (auto* r = q->provideRoom(roomData.roomId, roomData.joinState)) {
-            pendingStateRoomIds.removeOne(roomData.roomId);
-            // Update rooms one by one, giving time to update the UI.
-            QMetaObject::invokeMethod(
-                r,
-                [r, rd = std::move(roomData), fromCache] () mutable {
-                    r->updateData(std::move(rd), fromCache);
-                },
-                Qt::QueuedConnection);
+        }*/
+        if (auto* r = q->provideRoom(room.id, JoinState::Join)) { // TODO joinstate?
+            pendingStateRoomIds.removeOne(room.id);
+            r->updateData(std::move(room));
         }
     }
 }
@@ -1563,7 +1556,7 @@ QOlmAccount *Connection::olmAccount() const
 }
 #endif // Quotient_E2EE_ENABLED
 
-SyncJob* Connection::syncJob() const { return d->syncJob; }
+SlidingSyncJob* Connection::syncJob() const { return d->syncJob; }
 
 int Connection::millisToReconnect() const
 {
@@ -1974,6 +1967,7 @@ void Connection::saveState() const
 
 void Connection::loadState()
 {
+    return;
     if (!d->cacheState)
         return;
 
@@ -1991,7 +1985,7 @@ void Connection::loadState()
     // TODO: to handle load failures, instead of the above block:
     // 1. Do initial sync on failed rooms without saving the nextBatch token
     // 2. Do the sync across all rooms as normal
-    onSyncSuccess(std::move(sync), true);
+    //onSyncSuccess(std::move(sync), true);
     qCDebug(PROFILER) << "*** Cached state for" << userId() << "loaded in" << et;
 }
 

@@ -37,8 +37,8 @@ class User;
 class ConnectionData;
 class RoomEvent;
 
-class SyncJob;
-class SyncData;
+class SlidingSyncJob;
+class SlidingSyncData;
 class RoomMessagesJob;
 class PostReceiptJob;
 class ForgetRoomJob;
@@ -336,7 +336,7 @@ public:
     QStringList devicesForUser(const QString& userId) const;
     Q_INVOKABLE bool isQueryingKeys() const;
 #endif // Quotient_E2EE_ENABLED
-    Q_INVOKABLE Quotient::SyncJob* syncJob() const;
+    Q_INVOKABLE Quotient::SlidingSyncJob* syncJob() const;
     Q_INVOKABLE QString nextBatchToken() const;
     Q_INVOKABLE int millisToReconnect() const;
 
@@ -874,7 +874,7 @@ protected:
                       Omittable<JoinState> joinState = none);
 
     //! Process sync data from a successful sync request
-    void onSyncSuccess(SyncData&& data, bool fromCache = false);
+    void onSyncSuccess(SlidingSyncData&& data, bool fromCache = false);
 
 protected Q_SLOTS:
     void syncLoopIteration();

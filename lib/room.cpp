@@ -50,6 +50,7 @@
 #include "events/typingevent.h"
 #include "jobs/downloadfilejob.h"
 #include "jobs/mediathumbnailjob.h"
+#include "jobs/slidingsyncjob.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QHash>
@@ -147,6 +148,7 @@ public:
     QPointer<GetMembersByRoomJob> allMembersJob;
     //! Map from megolm sessionId to set of eventIds
     UnorderedMap<QString, QSet<QString>> undecryptedEvents;
+    QString slidingName;
 
     struct FileTransferPrivateInfo {
         FileTransferPrivateInfo() = default;
@@ -584,6 +586,9 @@ bool Room::allHistoryLoaded() const
 
 QString Room::name() const
 {
+    if (!d->slidingName.isEmpty()) {
+        return d->slidingName;
+    }
     return currentState().content<RoomNameEvent>().value;
 }
 
@@ -1919,28 +1924,32 @@ Room::Changes Room::Private::updateStatsFromSyncData(const SyncRoomData& data,
     return changes;
 }
 
-void Room::updateData(SyncRoomData&& data, bool fromCache)
+void Room::updateData(SlidingSyncRoom&& data)
 {
     qCDebug(MAIN) << "--- Updating room" << id() << "/" << objectName();
     bool firstUpdate = d->baseState.empty();
 
-    if (d->prevBatch && d->prevBatch->isEmpty())
-        *d->prevBatch = data.timelinePrevBatch;
-    setJoinState(data.joinState);
+    //if (d->prevBatch && d->prevBatch->isEmpty()) // TODO
+    //    *d->prevBatch = data.timelinePrevBatch;
+    setJoinState(JoinState::Join); // TODO
 
     Changes roomChanges {};
     // The order of calculation is important - don't merge the lines!
-    roomChanges |= d->updateStateFrom(std::move(data.state));
-    roomChanges |= d->setSummary(std::move(data.summary));
+    roomChanges |= d->updateStateFrom(std::move(data.requiredState));
+    //roomChanges |= d->setSummary(std::move(data.summary));
     roomChanges |= d->addNewMessageEvents(std::move(data.timeline));
 
-    for (auto&& ephemeralEvent : data.ephemeral)
-        roomChanges |= processEphemeralEvent(std::move(ephemeralEvent));
+    const auto oldName = d->slidingName;
+    d->slidingName = data.name;
+    Q_EMIT displaynameChanged(this, oldName);
 
-    for (auto&& event : data.accountData)
-        roomChanges |= processAccountDataEvent(std::move(event));
+    //for (auto&& ephemeralEvent : data.ephemeral)
+    //    roomChanges |= processEphemeralEvent(std::move(ephemeralEvent));
 
-    roomChanges |= d->updateStatsFromSyncData(data, fromCache);
+    //for (auto&& event : data.accountData)
+    //    roomChanges |= processAccountDataEvent(std::move(event));
+
+    //roomChanges |= d->updateStatsFromSyncData(data, fromCache);
 
     if (roomChanges & Change::Topic)
         emit topicChanged();
@@ -1948,7 +1957,7 @@ void Room::updateData(SyncRoomData&& data, bool fromCache)
     if (roomChanges & (Change::Name | Change::Aliases))
         emit namesChanged(this);
 
-    d->postprocessChanges(roomChanges, !fromCache);
+    d->postprocessChanges(roomChanges, false);
     if (firstUpdate)
         emit baseStateLoaded();
     qCDebug(MAIN) << "--- Finished updating room" << id() << "/" << objectName();

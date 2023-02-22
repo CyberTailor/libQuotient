@@ -41,6 +41,7 @@ class MemberSorter;
 class LeaveRoomJob;
 class SetRoomStateWithKeyJob;
 class RedactEventJob;
+class SlidingSyncRoom;
 
 /** The data structure used to expose file transfer information to views
  *
@@ -1031,7 +1032,7 @@ protected:
                              const RoomEvent& /*after*/)
     {}
     virtual QJsonObject toJson() const;
-    virtual void updateData(SyncRoomData&& data, bool fromCache = false);
+    virtual void updateData(SlidingSyncRoom&& data);
     virtual Notification checkForNotifications(const TimelineItem& ti);
 
 private:

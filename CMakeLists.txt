@@ -130,6 +130,7 @@ list(APPEND lib_SRCS
     lib/uriresolver.h lib/uriresolver.cpp
     lib/eventstats.h lib/eventstats.cpp
     lib/syncdata.h lib/syncdata.cpp
+    lib/slidingsyncdata.h lib/slidingsyncdata.cpp
     lib/settings.h lib/settings.cpp
     lib/networksettings.h lib/networksettings.cpp
     lib/converters.h lib/converters.cpp
@@ -167,6 +168,7 @@ list(APPEND lib_SRCS
     lib/jobs/requestdata.h lib/jobs/requestdata.cpp
     lib/jobs/basejob.h lib/jobs/basejob.cpp
     lib/jobs/syncjob.h lib/jobs/syncjob.cpp
+    lib/jobs/slidingsyncjob.h lib/jobs/slidingsyncjob.cpp
     lib/jobs/mediathumbnailjob.h lib/jobs/mediathumbnailjob.cpp
     lib/jobs/downloadfilejob.h lib/jobs/downloadfilejob.cpp
     libquotientemojis.qrc

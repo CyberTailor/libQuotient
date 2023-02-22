@@ -351,8 +351,9 @@ struct JsonArrayConverter {
         // hit the correct overload and not fall back to the generic fromJson
         // that treats everything as an object. See also the explanation in
         // the commit introducing these lines.
-        for (const QJsonValue v : ja)
+        for (const QJsonValue v : ja) {
             vect.push_back(fromJson<T>(v));
+        }
         return vect;
     }
     static auto load(const QJsonValue& jv) { return load(jv.toArray()); }

@@ -286,8 +286,13 @@ QUrl BaseJob::makeRequestUrl(QUrl baseUrl, const QByteArray& encodedPath,
 
 void BaseJob::Private::sendRequest()
 {
-    QNetworkRequest req { makeRequestUrl(connection->baseUrl(), apiEndpoint,
-                                         requestQuery) };
+    QNetworkRequest req;
+    if (QString::fromLatin1(apiEndpoint).contains("sync")) {
+        req = QNetworkRequest { makeRequestUrl(QUrl("http://localhost:8008"), apiEndpoint, requestQuery) };
+    } else {
+        req = QNetworkRequest { makeRequestUrl(connection->baseUrl(), apiEndpoint,
+                             requestQuery) };
+    }
     if (!requestHeaders.contains("Content-Type"))
         req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     if (needsToken)
