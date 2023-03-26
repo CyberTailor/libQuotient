@@ -135,7 +135,7 @@ private:
     bool macReceived = false;
     bool m_verified = false;
     QString m_pendingEdKeyId{};
-    QString m_pendingMasterKeyId{};
+    QString m_pendingMasterKey{};
 
     static CStructPtr<OlmSAS> makeOlmData();
     void handleReady(const KeyVerificationReadyEvent& event);

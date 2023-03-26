@@ -70,7 +70,7 @@ public:
 
     bool isSessionVerified(const QString& edKey);
     void setSessionVerified(const QString& edKeyId);
-    void setMasterKeyVerified(const QString& masterKeyId);
+    void setMasterKeyVerified(const QString& masterKey);
 
 private:
     void migrateTo1();

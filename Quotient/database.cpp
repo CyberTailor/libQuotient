@@ -477,11 +477,11 @@ bool Database::isSessionVerified(const QString& edKey)
     return query.next() && query.value("verified"_ls).toBool();
 }
 
-void Database::setMasterKeyVerified(const QString& masterKeyId)
+void Database::setMasterKeyVerified(const QString& masterKey)
 {
     qWarning() << "marking master key as verified";
     auto query = prepareQuery(QStringLiteral("UPDATE master_keys SET verified=true WHERE key=:key;"));
-    query.bindValue(":key"_ls, masterKeyId);
+    query.bindValue(":key"_ls, masterKey);
     transaction();
     execute(query);
     commit();

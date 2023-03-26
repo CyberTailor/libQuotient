@@ -407,7 +407,7 @@ void KeyVerificationSession::handleMac(const KeyVerificationMacEvent& event)
     }
 
     m_pendingEdKeyId = edKeyId;
-    m_pendingMasterKeyId = masterKey;
+    m_pendingMasterKey = masterKey;
 
     if (m_verified) {
         trustKeys();
@@ -417,7 +417,7 @@ void KeyVerificationSession::handleMac(const KeyVerificationMacEvent& event)
 void KeyVerificationSession::trustKeys()
 {
     m_connection->database()->setSessionVerified(m_pendingEdKeyId);
-    m_connection->database()->setMasterKeyVerified(m_pendingMasterKeyId);
+    m_connection->database()->setMasterKeyVerified(m_pendingMasterKey);
     if (m_remoteUserId == m_connection->userId()) {
         m_connection->reloadDevices();
     }
