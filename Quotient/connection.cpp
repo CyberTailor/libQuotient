@@ -1836,10 +1836,10 @@ bool Connection::isQueryingKeys() const
     return d->currentQueryKeysJob != nullptr;
 }
 
-void Connection::Private::handleQueryKeys(const QueryKeysJob* job)
+void Connection::Private::handleQueryKeys(const QHash<QString, QHash<QString, QueryKeysJob::DeviceInformation>>& deviceKeys,
+                                          const QHash<QString, CrossSigningKey>& masterKeys, const QHash<QString, CrossSigningKey>& selfSigningKeys, const QHash<QString, CrossSigningKey>& userSigningKeys)
 {
     database->transaction();
-    const auto masterKeys = job->masterKeys();
     for (const auto &[userId, key] : asKeyValueRange(masterKeys)) {
         if (key.userId != userId) {
             qCWarning(E2EE) << "Master key: userId mismatch";
@@ -1860,8 +1860,8 @@ void Connection::Private::handleQueryKeys(const QueryKeysJob* job)
                     "UPDATE tracked_devices SET verified=0, selfVerified=0 WHERE matrixId=:matrixId;"_ls);
                 query.bindValue(":matrixId"_ls, userId);
                 database->execute(query);
-                query = database->prepareQuery("DELETE FROM self_signing_keys WHERE matrixId=:matrixId;"_ls);
-                query.bindValue(":matrixId"_ls, userId);
+                query = database->prepareQuery("DELETE FROM self_signing_keys WHERE userId=:userId;"_ls);
+                query.bindValue(":userId"_ls, userId);
                 database->execute(query);
                 database->commit();
             } else {
@@ -1877,10 +1877,9 @@ void Connection::Private::handleQueryKeys(const QueryKeysJob* job)
         query.bindValue(":key"_ls, key.keys.values()[0]);
         database->execute(query);
     }
-    const auto selfSigningKeys = job->selfSigningKeys();
     for (const auto &[userId, key] : asKeyValueRange(selfSigningKeys)) {
         if (key.userId != userId) {
-            qCWarning(E2EE) << "Self signing key: userId mismatch";
+            qCWarning(E2EE) << "Self signing key: userId mismatch" << key.userId << userId;
             continue;
         }
         if (!key.usage.contains("self_signing"_ls)) {
@@ -1924,7 +1923,6 @@ void Connection::Private::handleQueryKeys(const QueryKeysJob* job)
         query.bindValue(":key"_ls, key.keys.values()[0]);
         database->execute(query);
     }
-    const auto userSigningKeys = job->userSigningKeys();
     for (const auto &[userId, key] : asKeyValueRange(userSigningKeys)) {
         if (key.userId != userId) {
             qWarning() << "User signing key: userId mismatch";
@@ -1977,7 +1975,7 @@ void Connection::Private::handleQueryKeys(const QueryKeysJob* job)
         database->execute(query);
         query.next();
         auto userSigningKey = query.value("key"_ls).toString();
-        for (const auto& masterKey : job->masterKeys()) {
+        for (const auto& masterKey : masterKeys) {
             auto signature = masterKey.signatures[q->userId()]["ed25519:"_ls % userSigningKey].toString();
             if (!signature.isEmpty()) {
                 if (ed25519VerifySignature(userSigningKey, toJson(masterKey), signature)) {
@@ -1989,14 +1987,13 @@ void Connection::Private::handleQueryKeys(const QueryKeysJob* job)
             }
         }
     }
-    const auto data = job->deviceKeys();
-    for(const auto &[user, keys] : asKeyValueRange(data)) {
-        QHash<QString, Quotient::DeviceKeys> oldDevices = deviceKeys[user];
+    for(const auto &[user, keys] : asKeyValueRange(deviceKeys)) {
+        QHash<QString, Quotient::DeviceKeys> oldDevices = this->deviceKeys[user];
         auto query = database->prepareQuery("SELECT * FROM self_signing_keys WHERE userId=:userId;"_ls);
         query.bindValue(":userId"_ls, user);
         database->execute(query);
         auto selfSigningKey = query.next() ? query.value("key"_ls).toString() : QString();
-        deviceKeys[user].clear();
+        this->deviceKeys[user].clear();
         selfVerifiedDevices[user].clear();
         for(const auto &device : keys) {
             if(device.userId != user) {
@@ -2034,7 +2031,7 @@ void Connection::Private::handleQueryKeys(const QueryKeysJob* job)
                     qCWarning(E2EE) << "failed self signing signature check" << user << device.deviceId;
                 }
             }
-            deviceKeys[user][device.deviceId] = SLICE(device, DeviceKeys);
+            this->deviceKeys[user][device.deviceId] = SLICE(device, DeviceKeys);
         }
         outdatedUsers -= user;
     }
@@ -2071,7 +2068,11 @@ void Connection::Private::loadOutdatedUserDevices()
     connect(queryKeysJob, &BaseJob::success, q, [this, queryKeysJob](){
         currentQueryKeysJob = nullptr;
         if (queryKeysJob->error() == BaseJob::Success) {
-            handleQueryKeys(queryKeysJob);
+            QFile f("/home/tobias/keys"_ls);
+            f.open(QIODevice::WriteOnly);
+            f.write(queryKeysJob->rawData());
+            f.close();
+            handleQueryKeys(queryKeysJob->deviceKeys(), queryKeysJob->masterKeys(), queryKeysJob->selfSigningKeys(), queryKeysJob->userSigningKeys());
         }
         emit q->finishedQueryingKeys();
     });
@@ -2657,11 +2658,14 @@ bool Connection::isUserVerified(const QString& userId) const
 
 bool Connection::isVerifiedDevice(const QString& userId, const QString& deviceId) const
 {
-    auto query = database()->prepareQuery("SELECT verified FROM tracked_devices WHERE deviceId=:deviceId AND matrixId=:matrixId;"_ls);
+    auto query = database()->prepareQuery("SELECT verified, selfVerified FROM tracked_devices WHERE deviceId=:deviceId AND matrixId=:matrixId;"_ls);
     query.bindValue(":deviceId"_ls, deviceId);
     query.bindValue(":matrixId"_ls, userId);
     database()->execute(query);
-    return query.next() && query.value("verified"_ls).toBool();
+    if (!query.next()) {
+        return false;
+    }
+    return query.value("verified"_ls).toBool() || (isUserVerified(userId) && query.value("selfVerified"_ls).toBool());
 }
 
 bool Connection::isKnownE2eeCapableDevice(const QString& userId, const QString& deviceId) const

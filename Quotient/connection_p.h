@@ -173,7 +173,8 @@ public:
     void loadOutdatedUserDevices();
     void saveDevicesList();
     void loadDevicesList();
-    void handleQueryKeys(const QueryKeysJob* job);
+    void handleQueryKeys(const QHash<QString, QHash<QString, QueryKeysJob::DeviceInformation>>& deviceKeys,
+                         const QHash<QString, CrossSigningKey>& masterKeys, const QHash<QString, CrossSigningKey>& selfSigningKeys, const QHash<QString, CrossSigningKey>& userSigningKeys);
 
     // This function assumes that an olm session with (user, device) exists
     std::pair<QOlmMessage::Type, QByteArray> olmEncryptMessage(
