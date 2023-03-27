@@ -22,6 +22,7 @@ private Q_SLOTS:
         QFile file(path);
         file.open(QIODevice::ReadOnly);
         auto data = file.readAll();
+        QVERIFY(!data.isEmpty());
         auto json = QJsonDocument::fromJson(data).object();
 
         auto connection = Connection::makeMockConnection("@tobiasfella:kde.org"_ls);
