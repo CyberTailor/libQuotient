@@ -2068,10 +2068,6 @@ void Connection::Private::loadOutdatedUserDevices()
     connect(queryKeysJob, &BaseJob::success, q, [this, queryKeysJob](){
         currentQueryKeysJob = nullptr;
         if (queryKeysJob->error() == BaseJob::Success) {
-            QFile f("/home/tobias/keys"_ls);
-            f.open(QIODevice::WriteOnly);
-            f.write(queryKeysJob->rawData());
-            f.close();
             handleQueryKeys(queryKeysJob->deviceKeys(), queryKeysJob->masterKeys(), queryKeysJob->selfSigningKeys(), queryKeysJob->userSigningKeys());
         }
         emit q->finishedQueryingKeys();
