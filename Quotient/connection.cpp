@@ -2676,6 +2676,42 @@ bool Connection::isKnownE2eeCapableDevice(const QString& userId, const QString& 
     database()->execute(query);
     return query.next();
 }
+
+bool Connection::hasConflictingDeviceIdsAndCrossSigningKeys(const QString& userId)
+{
+    auto devices = devicesForUser(userId);
+
+    auto selfQuery = database()->prepareQuery("SELECT key FROM self_signing_keys WHERE userId=:userId;"_ls);
+    selfQuery.bindValue(":userId"_ls, userId);
+    database()->execute(selfQuery);
+    if (!selfQuery.next()) {
+        return false;
+    }
+    if (devices.contains(selfQuery.value("key"_ls).toString())) {
+        return true;
+    }
+
+    auto masterQuery = database()->prepareQuery("SELECT key FROM master_keys WHERE userId=:userId;"_ls);
+    masterQuery.bindValue(":userId"_ls, userId);
+    database()->execute(masterQuery);
+    if (!masterQuery.next()) {
+        return false;
+    }
+    if (devices.contains(masterQuery.value("key"_ls).toString())) {
+        return true;
+    }
+
+    auto userQuery = database()->prepareQuery("SELECT key FROM user_signing_keys WHERE userId=:userId;"_ls);
+    userQuery.bindValue(":userId"_ls, userId);
+    database()->execute(userQuery);
+    if (!userQuery.next()) {
+        return false;
+    }
+    if (devices.contains(userQuery.value("key"_ls).toString())) {
+        return true;
+    }
+    return false;
+}
 #endif
 
 void Connection::reloadDevices()

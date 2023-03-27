@@ -52,6 +52,10 @@ KeyVerificationSession::KeyVerificationSession(
     , m_encrypted(encrypted)
     , m_remoteSupportedMethods(event.methods())
 {
+    if (connection->hasConflictingDeviceIdsAndCrossSigningKeys(m_remoteUserId)) {
+        qWarning() << "Remote user has conflicting device ids and cross signing keys and device ids; refusing to verify.";
+        return;
+    }
     const auto& currentTime = QDateTime::currentDateTime();
     const auto timeoutTime =
         std::min(event.timestamp().addSecs(600), currentTime.addSecs(120));
@@ -70,6 +74,10 @@ KeyVerificationSession::KeyVerificationSession(QString userId, QString deviceId,
     , m_connection(connection)
     , m_encrypted(false)
 {
+    if (connection->hasConflictingDeviceIdsAndCrossSigningKeys(m_remoteUserId)) {
+        qWarning() << "Remote user has conflicting device ids and cross signing keys and device ids; refusing to verify.";
+        return;
+    }
     setupTimeout(600s);
     QMetaObject::invokeMethod(this, &KeyVerificationSession::sendRequest);
 }

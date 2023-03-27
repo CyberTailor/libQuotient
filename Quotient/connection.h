@@ -352,6 +352,7 @@ public:
     bool isUserVerified(const QString& userId) const;
 
     void reloadDevices();
+    bool hasConflictingDeviceIdsAndCrossSigningKeys(const QString& userId);
 
 #endif // Quotient_E2EE_ENABLED
     Q_INVOKABLE Quotient::SyncJob* syncJob() const;
