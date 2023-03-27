@@ -2708,13 +2708,13 @@ bool Connection::hasConflictingDeviceIdsAndCrossSigningKeys(const QString& userI
     }
     return false;
 }
-#endif
 
 void Connection::reloadDevices()
 {
     d->outdatedUsers = d->trackedUsers;
     d->loadOutdatedUserDevices();
 }
+#endif
 
 Connection* Connection::makeMockConnection(const QString& mxId)
 {
